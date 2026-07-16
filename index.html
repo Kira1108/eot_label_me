@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EOT Studio · 端到端语音标注</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ============ Top bar ============ -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path d="M3 12h2l2-6 3 14 3-18 3 12 2-4h3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">EOT Studio</div>
+        <div class="brand-sub">End-of-Turn 语音标注</div>
+      </div>
+    </div>
+
+    <div class="loader">
+      <div class="input-wrap">
+        <span class="input-ic">🔗</span>
+        <input id="urlInput" type="text" placeholder="粘贴音频 URL (mp3/wav…，需允许 CORS)" />
+      </div>
+      <button id="loadUrlBtn" class="btn">加载 URL</button>
+      <span class="divider-v"></span>
+      <input id="fileInput" type="file" class="vh" accept="audio/*,.mp3,.wav,.ogg,.m4a,.flac" />
+      <label for="fileInput" class="btn btn-accent">📂 打开本地文件</label>
+    </div>
+
+    <div id="audioMeta" class="meta-strip hidden">
+      <div class="chip"><span class="chip-k">文件</span><span class="chip-v" id="metaName">-</span></div>
+      <div class="chip"><span class="chip-k">采样率</span><span class="chip-v mono" id="metaRate">-</span><span class="chip-u">Hz</span></div>
+      <div class="chip"><span class="chip-k">声道</span><span class="chip-v mono" id="metaCh">-</span></div>
+      <div class="chip"><span class="chip-k">时长</span><span class="chip-v mono" id="metaDur">-</span><span class="chip-u">s</span></div>
+    </div>
+  </header>
+
+  <!-- ============ Stage ============ -->
+  <main class="stage">
+
+    <!-- Empty state -->
+    <section class="empty-state" id="emptyState">
+      <div class="empty-icon">🎧</div>
+      <h2>开始一个标注项目</h2>
+      <p>粘贴音频 URL，或从右上角「打开本地文件」导入 mp3 / wav。<br/>系统会自动解析真实采样率并绘制波形。</p>
+    </section>
+
+    <!-- Waveform panel -->
+    <section class="wave-panel" id="waveCard" style="display:none">
+      <div class="wave-toolbar">
+        <div class="tb-group">
+          <button id="playBtn" class="icon-btn play" title="播放 / 暂停 (空格)">
+            <svg class="ic-play" viewBox="0 0 24 24" width="18" height="18"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>
+            <svg class="ic-pause" viewBox="0 0 24 24" width="18" height="18" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z" fill="currentColor"/></svg>
+          </button>
+          <div class="time-readout">
+            <span class="mono" id="cursorTime">0.000</span><span class="tr-u">s</span>
+          </div>
+        </div>
+
+        <div class="tb-group">
+          <button id="zoomSelectBtn" class="icon-btn" title="框选放大：拖动波形选择要放大的区域">
+            <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M10.5 8v5M8 10.5h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            <span>框选放大</span>
+          </button>
+          <label class="slider-wrap" title="缩放">
+            <svg viewBox="0 0 24 24" width="15" height="15"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15 15l5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <input id="zoom" type="range" min="0" max="1000" value="0" />
+          </label>
+          <button id="zoomResetBtn" class="icon-btn ghost" title="重置缩放">重置</button>
+        </div>
+
+        <div class="tb-group push-right">
+          <label class="sel-wrap">
+            <span class="sel-k">速度</span>
+            <select id="speed">
+              <option value="0.5">0.5×</option>
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <label id="channelWrap" class="sel-wrap hidden" title="波形显示的声道；单声道播放时会送到左右两个喇叭">
+            <span class="sel-k">声道</span>
+            <select id="channelSelect"></select>
+          </label>
+        </div>
+      </div>
+
+      <div class="wave-stage">
+        <div id="waveform"></div>
+        <div id="timeline"></div>
+      </div>
+
+      <div class="legend">
+        <span class="lg"><i class="sw seg"></i>语音区间</span>
+        <span class="lg"><i class="sw wait"></i>wait_time 区间</span>
+        <span class="lg-hint">提示：在波形上拖动即可框选语音区间；拖动区间边缘可微调。</span>
+      </div>
+    </section>
+
+    <!-- Work grid: annotation + list -->
+    <div class="work-grid">
+
+      <!-- Annotation panel -->
+      <section class="panel ann-panel" id="annCard" style="display:none">
+        <div class="panel-head">
+          <span class="ph-ic">✎</span>
+          <h3>标注当前 sample</h3>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><i class="sw seg"></i>语音区间</div>
+          <div class="btn-line">
+            <button id="segStartBtn" class="btn sm">起点 = 光标</button>
+            <button id="segEndBtn" class="btn sm">终点 = 光标</button>
+          </div>
+          <div class="stat-line">
+            <span>起点 <b class="mono" id="segStart">-</b></span>
+            <span>终点 <b class="mono" id="segEnd">-</b></span>
+            <span>时长 <b class="mono" id="segDur">-</b></span>
+          </div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">标签</div>
+          <div class="seg-toggle">
+            <button id="completeBtn" class="lbl lbl-complete">
+              <span class="lbl-ic">✓</span> complete
+            </button>
+            <button id="incompleteBtn" class="lbl lbl-incomplete">
+              <span class="lbl-ic">…</span> incomplete
+            </button>
+          </div>
+          <div class="cur-label-row"><span id="curLabel" class="tag"></span></div>
+        </div>
+
+        <div id="waitBox" class="field wait-field hidden">
+          <div class="field-label"><i class="sw wait"></i>wait_time</div>
+          <div class="wait-readout">
+            <div class="wait-big"><b class="mono" id="waitMs">-</b><span>ms</span></div>
+            <div class="wait-range">
+              <span>起 <b class="mono" id="waitStart">-</b></span>
+              <span>止 <b class="mono" id="waitEnd">-</b></span>
+            </div>
+          </div>
+          <div class="btn-line">
+            <button id="waitStartFromCursor" class="btn sm">起点 = 光标</button>
+            <button id="waitEndFromCursor" class="btn sm">终点 = 光标</button>
+          </div>
+          <p class="micro-hint">默认 500ms，从语音终点起算；也可直接拖动黄色区间两条边缘。</p>
+        </div>
+
+        <div class="field">
+          <div class="field-label">备注</div>
+          <input id="noteInput" type="text" class="text-input" placeholder="可选备注…" />
+        </div>
+
+        <div class="panel-actions">
+          <button id="addBtn" class="btn btn-primary block">＋ 保存这条标注</button>
+          <button id="clearCurBtn" class="btn ghost block">清除当前</button>
+        </div>
+      </section>
+
+      <!-- Saved list panel -->
+      <section class="panel list-panel" id="listCard" style="display:none">
+        <div class="panel-head">
+          <span class="ph-ic">☰</span>
+          <h3>已保存标注</h3>
+          <span class="count-badge" id="count">0</span>
+        </div>
+
+        <div class="table-scroll">
+          <table id="annTable">
+            <thead>
+              <tr><th>#</th><th>区间 (s)</th><th>时长</th><th>标签</th><th>wait</th><th>备注</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <div class="save-zone">
+          <div class="dir-row">
+            <button id="pickDirBtn" class="btn sm">📁 选择保存文件夹</button>
+            <span id="dirLabel" class="dir-label"></span>
+          </div>
+          <p class="micro-hint">建议从桌面选择，会在其中创建/使用 <b>eot-data</b> 文件夹。每个 case 存为独立随机文件夹（截取音频 + 标注 JSON）。</p>
+          <div class="save-actions">
+            <button id="saveCasesBtn" class="btn btn-primary">💾 保存所有 Case</button>
+            <button id="exportBtn" class="btn sm ghost">导出汇总 JSON</button>
+            <button id="copyBtn" class="btn sm ghost">复制 JSON</button>
+            <button id="clearAllBtn" class="btn sm danger">清空</button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- ============ Status bar ============ -->
+  <footer class="statusbar">
+    <span class="sb-dot"></span>
+    <span id="loadStatus" class="status">就绪 · 等待加载音频</span>
+    <span class="sb-right">空格 播放/暂停 · 拖动波形框选语音区间</span>
+  </footer>
+
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
